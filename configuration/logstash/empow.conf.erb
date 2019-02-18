@@ -1,0 +1,412 @@
+input { 
+  tcp{
+    port =>  <%= setting("var.input.ids.sourcefire.port", 10513) %>
+    tags => "sourcefire-ids"
+  }
+
+  tcp{
+    port =>  <%= setting("var.input.ids.snort.port", 10514) %>
+    tags => "snort-ids"
+  }
+
+  tcp{
+    port =>  <%= setting("var.input.ids.paloalto.port", 10515) %>
+    tags => "paloalto-ids"
+  }
+
+  tcp{
+    port => <%= setting("var.input.ids.fortinet.port", 10516) %>
+    tags => "fortinet-ids"
+  }
+
+  tcp{
+    port => <%= setting("var.input.av.symantec.port", 10520) %>
+    tags => "symantec-av"
+  }
+
+  tcp{
+    port => <%= setting("var.input.av.trendmicro.port", 10521) %>
+    tags => "trendmicro-av"
+  }
+
+  tcp{
+    port => <%= setting("var.input.am.fireeye.port", 10522) %>
+    tags => "fireeye-am"
+  }
+
+  udp{
+    port => 2055
+    tags => "dummy"
+  }
+}
+
+
+
+
+filter{
+
+if "sourcefire-ids" in [tags] {
+   grok{
+   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort\[%{NUMBER}\]: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
+   add_field => {"serviceType" => "IDS" "productName" => "sourcefire"}
+
+   add_tag => ["empow"]
+   add_tag => ["src_ip"]
+   add_tag => ["dst_ip"]
+   }
+
+} # end of sourcefire-ids
+
+if "snort-ids" in [tags] {
+   grok{
+   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort\[%{NUMBER}\]: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
+   add_field => {"serviceType" => "IDS" "productName" => "snort"}
+
+   add_tag => ["empow"]
+   add_tag => ["src_ip"]
+   add_tag => ["dst_ip"]
+   }
+
+} # end of snort-ids
+
+if "paloalto-ids" in [tags] {
+   csv{
+   }   
+   if [column4] == "THREAT" and [column5] != "wildfire"{
+      mutate{
+      replace => {"serviceType" => "IDS" "productName" => "paloalto"}
+      replace => {"date" => "%{column7}" "src_entity" => "%{column8}" "dst_entity" => "%{column9}"}
+      add_tag => ["empow"]
+      add_tag => ["src_ip"]
+      add_tag => ["dst_ip"]
+      }
+      grok{
+         match => {"column33" => "%{NUMBER:sig_id}"}
+	
+      }
+   }
+   else{
+      drop{}
+   }
+
+} # end of paloalto-ids
+
+if "fortinet-ids" in [tags] {
+   grok{
+      match => {"message" => "%{NUMBER}\>(?<kv_log>.*)"}
+   }     
+   kv{
+    source => "kv_log"
+   }
+   if [subtype] == "ips" {
+      mutate{
+         replace => {"serviceType" => "IDS" "productName" => "fortinet"}
+	 replace => {"src_entity" => "%{srcip}" "dst_entity" => "%{dstip}" "sig_id" => "%{attackid}" "date" => "%{date} %{time}" }
+         add_tag => ["empow"]
+         add_tag => ["src_ip"]
+         add_tag => ["dst_ip"]
+      }
+   }
+   else{
+      drop{}
+   }
+} # end of fortinet-ids
+
+
+if "symantec-av" in [tags] {
+grok {
+  match => {
+    "message" => "<\d*>%{SYSLOGTIMESTAMP:date} %{IP} %{GREEDYDATA:keyvalues}"
+  }
+}
+
+
+kv { 
+  field_split => ","
+  value_split => ":" 
+  source => "keyvalues"
+  remove_field => ["keyvalues"]
+}
+
+mutate {
+  rename => {
+    #"Application hash" => "[threat][hash]"
+    "Risk name" => "[threat][[malware_name]"
+  }
+
+  add_field => {"serviceType" => "AM" "productName" => "symantec" }
+  add_tag => ["empow"]
+
+}
+
+if [Computer name] and [Computer name] != "" {
+  mutate{
+    rename => {"Computer name" => "dst_entity"}
+    add_tag => ["dst_host"]
+    add_tag => ["src_host"]
+  }
+}
+else{
+  mutate{
+    rename => {"IP Address" => "dst_entity"}
+    add_tag => ["dst_ip"]
+    add_tag => ["src_ip"]
+  }
+}
+
+if [Downloaded by]{
+   translate{
+	field => "[Downloaded by]"
+	destination => "[vector]"
+	regex => true
+	dictionary => {
+	   "Removable Files Portal" => "EMAIL"
+	   "chrome.exe|iexplore.exe|opera.exe|firefox.exe|MicrosoftEdge.exe" => "DOWNLOAD"
+	}
+	fallback => "LOCAL_ACTIVITY"
+   }
+}
+else{
+   mutate{
+     add_field => {"vector" => "LOCAL_ACTIVITY"}
+   }
+}
+
+if [vector] == "LOCAL_ACTIVITY"{
+   mutate{
+     add_field => {"src_entity" => "%{dst_entity}"}
+   }
+}
+else{
+   mutate{
+      remove_tag => ["src_ip"]
+      remove_tag => ["src_host"]
+   }
+}
+
+
+} # end of symantec-av
+
+
+if "trendmicro-av" in [tags] {
+grok {
+  match => {"message" => "((?<date>([\w]* [\d:]* [\d:]*))) (([\w\s]* LEEF:[\d.]*))\|Trend Micro\|Deep Security Manager\|[\d.]*\|((?<signature>([\d]*)))\|%{GREEDYDATA:keyvalues}"}
+}
+
+kv {
+  value_split => "="
+  field_split => "   "
+  source => "keyvalues"
+  remove_field => ["keyvalues"]
+}
+
+mutate {
+  rename => {
+    "TrendMicroDsFileMD5" => "[threat][[hash]"
+    "TrendMicroDsFileSHA1" => "[threat][[hash]"
+    "TrendMicroDsFileSHA256" => "[threat][[hash]"
+    "name" => "[threat][[malware_name]"
+  }
+  add_field => {"serviceType" => "AM" "productName" => "trendmicro"}
+  add_tag => ["empow"]
+
+}
+
+if [dvchost] and [dvchost] != "" {
+  mutate{
+    add_field => {"dst_entity" => "%{dvchost}"}
+    add_field => {"src_entity" => "%{dvchost}"}
+    add_tag => ["src_host"]
+    add_tag => ["dst_host"]
+  }
+}
+else{
+  mutate{
+    add_field => {"dst_entity" => "%{dvc}"}
+    add_field => {"src_entity" => "%{dvc}"}
+    add_tag => ["src_ip"]
+    add_tag => ["dst_ip"]
+  }
+}
+
+
+} # end of trendmicro-av
+
+if "fireeye-am" in [tags] {
+grok {
+  match => {"message" => ".*CEF:\d\|FireEye\|MPS\|[\d\s\.]*\|MO\|(?<word>([\w\-]*))\|(?<word>([\w\-\d]*))\|(?<word2>([\w\-\d]*)%{GREEDYDATA:keyvalues})"}
+}
+
+kv {
+  source => "keyvalues"
+  remove_field => ["keyvalues"]
+}
+
+mutate {
+  rename => {
+    "fileHash" => "[threat][hash]"
+    "externalId" => "[threat][malware_name]"
+  }
+  add_field => {"serviceType" => "AM" "productName" => "fireeye"}
+  add_tag => ["empow"]
+}
+
+if [destinationHostName] and [destinationHostName] != "" {
+  mutate{
+    rename => {"destinationHostName" => "dst_entity"}
+    add_tag => ["dst_host"]
+  }
+}
+else{
+  mutate{
+    rename => {"duser" => "dst_entity"}
+    add_tag => ["dst_ip"]
+  }
+}
+
+if [shost] and [shost] != "" {
+  mutate{
+    rename => {"shost" => "src_entity"}
+    add_tag => ["src_host"]
+  }
+}
+else{
+  mutate{
+    rename => {"src" => "src_entity"}
+    add_tag => ["src_ip"]
+  }
+}
+
+
+} # end of fireeye-am
+
+
+if "empow" in [tags] {
+
+
+  if "src_ip" in [tags]{
+    cidr{
+      add_tag => ["internal_src"]
+      address => ["%{src_entity}"]
+      network => <%= setting("var.internal.networks", []) %>
+    }
+  }
+  else if "src_host" in [tags]{
+     mutate{
+       add_tag => ["internal_src"]
+     }
+  }
+
+
+  if "dst_ip" in [tags]{
+    cidr{
+      add_tag => ["internal_dst"]
+      address => ["%{src_entity}"]
+      network => <%= setting("var.internal.networks", []) %>
+    }
+  }
+  else{
+     mutate{
+       add_tag => ["internal_dst"]
+     }
+  }
+
+  if "internal_src" in [tags]{
+     mutate{
+       add_field => {"is_src_internal" => true}
+     }
+  }
+  else{
+     mutate{
+       add_field => {"is_src_internal" => false}
+     }
+  }
+
+  if "internal_dst" in [tags]{
+     mutate{
+       add_field => {"is_dst_internal" => true}
+     }
+  }
+  else{
+     mutate{
+       add_field => {"is_dst_internal" => false}
+     }
+  }
+
+
+  if [serviceType] == "IDS" {
+     mutate{
+       add_field => {"[threat][signature]" => "%{sig_id}"}
+     }
+   }
+
+   empowclassifier{
+      product_type_field => "serviceType"
+      product_name_field => "productName"
+      bulk_request_interval => 1
+      bulk_request_size => 100
+      username =>  "<%= setting("var.classification.username", "user") %>"
+      password => "<%= setting("var.classification.pass", "pass") %>"
+   }
+
+   if "_empow_classifer_error" in [tags] {
+      mutate{
+        copy => {"[empow_errors][0]" => "[classificationError]"}
+        replace => {"performer" => "%{src_entity}" "victim" => "%{dst_entity}"}
+	#add_field => { "intent" => "" "attackStage" => ""}
+      }
+   }
+   else{
+      mutate{
+        copy => { "[empow_classification_response][intents][0][tactic]" => "intent"}
+        copy => { "[empow_classification_response][intents][0][attackStage]" => "attackStage"}
+	#add_field => { "classificationError" => ""}
+
+      }
+      if [empow_classification_response][intents][0][isSrcPerformer]{
+        mutate{
+          replace => {"performer" => "%{src_entity}" "victim" => "%{dst_entity}"}
+        }
+      }
+      else{
+        mutate{
+          replace => {"performer" => "%{dst_entity}" "victim" => "%{src_entity}"}
+        }
+      }
+   }
+
+   mutate{
+      replace => {"performer" => "%{src_entity}" "victim" => "%{dst_entity}"}
+      rename => {"message" => "log"}
+   }
+
+   date{
+     match => ["date", "UNIX", "MMMM dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss", "yyyy-MM-dd HH:mm:ss"]
+     target => "date"
+   }
+
+# debug
+   mutate{
+      convert => {"date" => "string"}
+   }
+
+   mutate{
+      gsub => ["date", "2019", "2018"]
+   }
+# end of debug 
+
+   prune{
+        whitelist_names => ["^serviceType$", "^productName$", "^performer$", "^victim$", "^date$", "^@timestamp$", "^attackStage$", "^intent$", "^classificationError$", "tags", "internal"]
+   }
+}
+}
+ 
+output {
+
+  <%= elasticsearch_output_config('_doc') %>
+
+  udp{
+    host => "127.0.0.1"
+    port => 1237
+  }
+}

@@ -1,0 +1,45 @@
+{
+    "order": 0,
+    "template": "empow-*",
+    "mappings": {
+        "_default_": {
+            "dynamic": false,
+            "_source": { "includes": ["date", "performer", "victim", "attackStage", "intent", "productName", "serviceType", "log", "classificationError"]},
+            "properties": {
+                "@version": {
+                    "type": "keyword"
+                },
+                "@timestamp": {
+                    "type": "date"
+                },
+		"date": {
+                    "type": "date"
+                },
+		"log": {
+                    "type": "text"
+                },
+		"classificationError": {
+                    "type": "text"
+                },
+                "performer": {
+                    "type": "keyword"
+                },
+                "victim": {
+                    "type": "keyword"
+                },
+                "attackStage": {
+                    "type": "keyword"
+                },
+                "intent": {
+                    "type": "keyword"
+                },
+                "productName": {
+                    "type": "keyword"
+                },
+                "serviceType": {
+                    "type": "keyword"
+                }
+            }
+        }
+    }
+}
