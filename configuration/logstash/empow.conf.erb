@@ -1,42 +1,6 @@
 input { 
-  tcp{
-    port =>  <%= setting("var.input.ids.sourcefire.port", 10513) %>
-    tags => "sourcefire-ids"
-  }
-
-  tcp{
-    port =>  <%= setting("var.input.ids.snort.port", 10514) %>
-    tags => "snort-ids"
-  }
-
-  tcp{
-    port =>  <%= setting("var.input.ids.paloalto.port", 10515) %>
-    tags => "paloalto-ids"
-  }
-
-  tcp{
-    port => <%= setting("var.input.ids.fortinet.port", 10516) %>
-    tags => "fortinet-ids"
-  }
-
-  tcp{
-    port => <%= setting("var.input.av.symantec.port", 10520) %>
-    tags => "symantec-av"
-  }
-
-  tcp{
-    port => <%= setting("var.input.av.trendmicro.port", 10521) %>
-    tags => "trendmicro-av"
-  }
-
-  tcp{
-    port => <%= setting("var.input.am.fireeye.port", 10522) %>
-    tags => "fireeye-am"
-  }
-
   udp{
-    port => 2055
-    tags => "dummy"
+    port => <%= setting("var.input.udp.port", 514) %>
   }
 }
 
@@ -44,10 +8,28 @@ input {
 
 
 filter{
+  translate{
+    field => "[message]"
+    destination => "[log_dispatcher]"
+    regex => true
+    dictionary => {
+      "snort.*\[[0-9]+:[0-9]+:[0-9]+\]"     => "snort-ids"
+      "(?i)firepower.*\[[0-9]+:[0-9]+:[0-9]+\]" => "sourcefire-ids"
+      "THREAT,vulnerability" 	       	    => "paloalto-ids"
+      "subtype=ips"			    => "fortinet-ids"
+      "SymantecServer:.*Virus found"	    => "symantec-av"
+      "Trend Micro.*Anti-Malware"	    => "trendmicro-av"
+   }
+    fallback => "unknownn"
+  }
 
-if "sourcefire-ids" in [tags] {
+
+
+
+
+if [log_dispatcher]=="sourcefire-ids" {
    grok{
-   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort\[%{NUMBER}\]: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
+   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} firepower .* \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})?.*->%{IP:dst_entity}(:%{NUMBER})?"}
    add_field => {"serviceType" => "IDS" "productName" => "sourcefire"}
 
    add_tag => ["empow"]
@@ -57,7 +39,7 @@ if "sourcefire-ids" in [tags] {
 
 } # end of sourcefire-ids
 
-if "snort-ids" in [tags] {
+if [log_dispatcher]=="snort-ids" {
    grok{
    match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort\[%{NUMBER}\]: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
    add_field => {"serviceType" => "IDS" "productName" => "snort"}
@@ -66,54 +48,44 @@ if "snort-ids" in [tags] {
    add_tag => ["src_ip"]
    add_tag => ["dst_ip"]
    }
-
 } # end of snort-ids
 
-if "paloalto-ids" in [tags] {
+if [log_dispatcher]=="paloalto-ids" {
    csv{
    }   
-   if [column4] == "THREAT" and [column5] != "wildfire"{
-      mutate{
-      replace => {"serviceType" => "IDS" "productName" => "paloalto"}
-      replace => {"date" => "%{column7}" "src_entity" => "%{column8}" "dst_entity" => "%{column9}"}
-      add_tag => ["empow"]
-      add_tag => ["src_ip"]
-      add_tag => ["dst_ip"]
-      }
-      grok{
-         match => {"column33" => "%{NUMBER:sig_id}"}
-	
-      }
+   mutate{
+     replace => {"serviceType" => "IDS" "productName" => "paloalto"}
+     replace => {"date" => "%{column7}" "src_entity" => "%{column8}" "dst_entity" => "%{column9}"}
+     add_tag => ["empow"]
+     add_tag => ["src_ip"]
+     add_tag => ["dst_ip"]
    }
-   else{
-      drop{}
+  
+   grok{
+     match => {"column33" => "%{NUMBER:sig_id}"}
    }
 
 } # end of paloalto-ids
 
-if "fortinet-ids" in [tags] {
-   grok{
-      match => {"message" => "%{NUMBER}\>(?<kv_log>.*)"}
-   }     
-   kv{
+if [log_dispatcher]=="fortinet-ids" {
+  grok{
+     match => {"message" => "%{NUMBER}\>(?<kv_log>.*)"}
+  }     
+  kv{
     source => "kv_log"
-   }
-   if [subtype] == "ips" {
-      mutate{
-         replace => {"serviceType" => "IDS" "productName" => "fortinet"}
-	 replace => {"src_entity" => "%{srcip}" "dst_entity" => "%{dstip}" "sig_id" => "%{attackid}" "date" => "%{date} %{time}" }
-         add_tag => ["empow"]
-         add_tag => ["src_ip"]
-         add_tag => ["dst_ip"]
-      }
-   }
-   else{
-      drop{}
-   }
+  }
+ 
+  mutate{
+    replace => {"serviceType" => "IDS" "productName" => "fortinet"}
+    replace => {"src_entity" => "%{srcip}" "dst_entity" => "%{dstip}" "sig_id" => "%{attackid}" "date" => "%{date} %{time}" }
+    add_tag => ["empow"]
+    add_tag => ["src_ip"]
+    add_tag => ["dst_ip"]
+    }
 } # end of fortinet-ids
 
 
-if "symantec-av" in [tags] {
+if [log_dispatcher] == "symantec-av"{
 grok {
   match => {
     "message" => "<\d*>%{SYSLOGTIMESTAMP:date} %{IP} %{GREEDYDATA:keyvalues}"
@@ -188,7 +160,7 @@ else{
 } # end of symantec-av
 
 
-if "trendmicro-av" in [tags] {
+if [log_dispatcher] == "trendmicro-av"{
 grok {
   match => {"message" => "((?<date>([\w]* [\d:]* [\d:]*))) (([\w\s]* LEEF:[\d.]*))\|Trend Micro\|Deep Security Manager\|[\d.]*\|((?<signature>([\d]*)))\|%{GREEDYDATA:keyvalues}"}
 }
@@ -232,7 +204,7 @@ else{
 
 } # end of trendmicro-av
 
-if "fireeye-am" in [tags] {
+if [log_dispatcher] == "fireeye-am"{
 grok {
   match => {"message" => ".*CEF:\d\|FireEye\|MPS\|[\d\s\.]*\|MO\|(?<word>([\w\-]*))\|(?<word>([\w\-\d]*))\|(?<word2>([\w\-\d]*)%{GREEDYDATA:keyvalues})"}
 }
@@ -279,6 +251,23 @@ else{
 
 
 } # end of fireeye-am
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 if "empow" in [tags] {
@@ -385,18 +374,8 @@ if "empow" in [tags] {
      target => "date"
    }
 
-# debug
-   mutate{
-      convert => {"date" => "string"}
-   }
-
-   mutate{
-      gsub => ["date", "2019", "2018"]
-   }
-# end of debug 
-
    prune{
-        whitelist_names => ["^serviceType$", "^productName$", "^performer$", "^victim$", "^date$", "^@timestamp$", "^attackStage$", "^intent$", "^classificationError$", "tags", "internal"]
+        whitelist_names => ["^serviceType$", "^productName$", "^performer$", "^victim$", "^date$", "^@timestamp$", "^attackStage$", "^intent$", "^classificationError$", "^internal$", "^log$"]
    }
 }
 }
