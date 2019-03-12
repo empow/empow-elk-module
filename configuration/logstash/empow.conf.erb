@@ -41,7 +41,7 @@ if [log_dispatcher]=="sourcefire-ids" {
 
 if [log_dispatcher]=="snort-ids" {
    grok{
-   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort\[%{NUMBER}\]: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
+   match => {"message" => "%{NUMBER}\>%{SYSLOGTIMESTAMP:date} snort.*: \[(?<sig_id>%{NUMBER}:%{NUMBER}):%{NUMBER}\] .* %{IP:src_entity}(:%{NUMBER})? -> %{IP:dst_entity}(:%{NUMBER})?"}
    add_field => {"serviceType" => "IDS" "productName" => "snort"}
 
    add_tag => ["empow"]
