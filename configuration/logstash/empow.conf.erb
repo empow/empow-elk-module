@@ -338,7 +338,7 @@ if "empow" in [tags] {
       password => "<%= setting("var.classification.pass", "pass") %>"
    }
 
-   if "_empow_classifer_error" in [tags] {
+   if "_empow_classifier_error" in [tags] {
       mutate{
         copy => {"[empow_errors][0]" => "[classificationError]"}
         replace => {"performer" => "%{src_entity}" "victim" => "%{dst_entity}"}
